@@ -32,12 +32,20 @@ class DisplaySurface
 
 	viewMatrix(eye)
 	{
-		// to be written by you!
-
-		var target = new THREE.Vector3(0,0,0);	
-		var upVector = new THREE.Vector3(0,1,0);	
-		var mat = new THREE.Matrix4();
-		mat = mat.lookAt(eye, target, upVector); // this lookAt version creates only a rotation matrix
+		// Calculate surface normal (cross product of u and v vectors)
+        var normal = new THREE.Vector3().crossVectors(this.u, this.v).normalize();
+    
+        // The target point is the perpendicular projection of the eye onto the surface
+        var eyeToOrigin = new THREE.Vector3().subVectors(this.origin, eye);
+        var distance = eyeToOrigin.dot(normal);
+        var target = new THREE.Vector3().addVectors(eye, normal.multiplyScalar(distance));
+        
+        // Up vector is aligned with the v direction of the surface
+        var upVector = this.v.clone().normalize();
+        
+        // Create view matrix
+        var mat = new THREE.Matrix4();
+        mat.lookAt(eye, target, upVector);
 		var translate = new THREE.Matrix4().makeTranslation(-eye.x, -eye.y, -eye.z);
 		mat = mat.multiplyMatrices(mat, translate);
 		return mat;
@@ -45,16 +53,42 @@ class DisplaySurface
 	
     projectionMatrix(eye, znear, zfar)
     {
-		// to be written by you!
-
-        var left = -1;
-        var right = 1;
-        var bottom = -1;
-        var top = 1;
-        return new THREE.Matrix4().makePerspective(left, right, top, bottom, znear, zfar);
+        // Calculate surface normal and basis vectors
+        var normal = new THREE.Vector3().crossVectors(this.u, this.v).normalize();
+        var uDir = this.u.clone().normalize();
+        var vDir = this.v.clone().normalize();
+        
+        // Calculate distance from eye to surface plane
+        var eyeToOrigin = new THREE.Vector3().subVectors(this.origin, eye);
+        var distance = Math.abs(eyeToOrigin.dot(normal));
+        var nearOverDistance = znear / distance;
+        
+        // Calculate vectors from eye to corners of the display
+        var eyeToOriginPlusU = new THREE.Vector3().subVectors(this.origin.clone().add(this.u), eye);
+        var eyeToOriginPlusV = new THREE.Vector3().subVectors(this.origin.clone().add(this.v), eye);
+        
+        // Project these vectors onto the local coordinate system of the surface
+        var left = eyeToOrigin.dot(uDir) * nearOverDistance;
+        var right = eyeToOriginPlusU.dot(uDir) * nearOverDistance;
+        var bottom = eyeToOrigin.dot(vDir) * nearOverDistance;
+        var top = eyeToOriginPlusV.dot(vDir) * nearOverDistance;
+        
+        var matrix = new THREE.Matrix4().makePerspective(left, right, top, bottom, znear, zfar);
+        return new FrustumParameters(left, right, bottom, top, znear, zfar, matrix);
     }
 }
 
+class FrustumParameters {
+    constructor(left, right, bottom, top, near, far, matrix) {
+        this.left = left;
+        this.right = right;
+        this.bottom = bottom;
+        this.top = top;
+        this.near = near;
+        this.far = far;
+        this.matrix = matrix;
+    }
+}
 
 var renderer, scene, camera;
 var displaySurfaces, displaySurfaceScene, displaySurfaceTargets;
@@ -236,9 +270,20 @@ function createDisplaySurfaces()
         new THREE.Vector3(0.0, 0.0,  -300.0), 
         new THREE.Vector3(0.0, 300.0,   0.0));
     displaySurfaces.push(leftScreen);
-	
-	// to be completed by you
-	
+
+    // RIGHT SCREEN
+    var rightScreen = new DisplaySurface("Right",
+        new THREE.Vector3(150.0, -150.0, -150.0), 
+        new THREE.Vector3(0.0, 0.0, 300.0), 
+        new THREE.Vector3(0.0, 300.0, 0.0));
+    displaySurfaces.push(rightScreen);
+
+    // FLOOR SCREEN
+    var floorScreen = new DisplaySurface("Floor",
+        new THREE.Vector3(-150.0, -150.0, 150.0), 
+        new THREE.Vector3(300.0, 0.0, 0.0), 
+        new THREE.Vector3(0.0, 0.0, -300.0));
+    displaySurfaces.push(floorScreen);
 }
 
 function getLeftEyePosition()
@@ -260,7 +305,7 @@ function cameraFromViewProj(view, proj)
 	inv.copy(view).invert();
 	cam.position.set(inv.elements[12], inv.elements[13], inv.elements[14]);
 	cam.setRotationFromMatrix(view);
-	cam.projectionMatrix = proj.clone();
+	cam.projectionMatrix = proj.matrix.clone();
 	return cam;
 }
 
@@ -315,7 +360,7 @@ var animate = function () {
 
 
 window.addEventListener( 'keydown', function ( event ) 
-{
+    {
         switch ( event.code ) {
             case 'KeyL': 
                 var eye = getLeftEyePosition();
@@ -334,18 +379,46 @@ window.addEventListener( 'keydown', function ( event )
 			case 'KeyT':
 				var viewF = displaySurfaces[0].viewMatrix(new THREE.Vector3(50,20,100));
 				var viewL = displaySurfaces[1].viewMatrix(new THREE.Vector3(50,20,100));
-				//var viewR = displaySurfaces[2].viewMatrix(new THREE.Vector3(50,20,100));
-				//var viewB = displaySurfaces[3].viewMatrix(new THREE.Vector3(50,20,100));
+				var viewR = displaySurfaces[2].viewMatrix(new THREE.Vector3(50,20,100));
+				var viewB = displaySurfaces[3].viewMatrix(new THREE.Vector3(50,20,100));
 				console.log("View matrices:");
 				console.log(viewF);
 				console.log(viewL);
-				//console.log(viewR);
-				//console.log(viewB);
+				console.log(viewR);
+				console.log(viewB);
 				break;
                 
-                    
-}
-});
+            case 'KeyY':
+                var eye = new THREE.Vector3(0, 0, 0);
+                var znear = 1, zfar = 1000;
+                var paramsF = displaySurfaces[0].projectionMatrix(eye, znear, zfar);
+                var paramsL = displaySurfaces[1].projectionMatrix(eye, znear, zfar);
+                var paramsR = displaySurfaces[2].projectionMatrix(eye, znear, zfar);
+                var paramsB = displaySurfaces[3].projectionMatrix(eye, znear, zfar);
+                
+                console.log("\nFrustum parameters (eye=(0,0,0), znear=1, zfar=1000):");
+                console.log("Front:", paramsF);
+                console.log("Left:", paramsL);
+                console.log("Right:", paramsR);
+                console.log("Bottom:", paramsB);
+                break;
+
+            case 'KeyU':
+                var eye = new THREE.Vector3(50, 20, 100);
+                var znear = 0.1, zfar = 100;
+                var paramsF = displaySurfaces[0].projectionMatrix(eye, znear, zfar);
+                var paramsL = displaySurfaces[1].projectionMatrix(eye, znear, zfar);
+                var paramsR = displaySurfaces[2].projectionMatrix(eye, znear, zfar);
+                var paramsB = displaySurfaces[3].projectionMatrix(eye, znear, zfar);
+                
+                console.log("\nFrustum parameters (eye=(50,20,100), znear=0.1, zfar=100):");
+                console.log("Front:", paramsF);
+                console.log("Left:", paramsL);
+                console.log("Right:", paramsR);
+                console.log("Bottom:", paramsB);
+                break;
+        }
+    });
 
 
 
